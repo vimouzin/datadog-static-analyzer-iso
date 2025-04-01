@@ -53,10 +53,28 @@ use secrets::model::secret_result::{SecretResult, SecretValidationStatus};
 use secrets::scanner::{build_sds_scanner, find_secrets};
 use secrets::secret_files::should_ignore_file_for_secret;
 use std::cell::Cell;
+use encoding_rs::{UTF_8, WINDOWS_1252};
 
 fn print_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} FILE [options]", program);
     print!("{}", opts.usage(&brief));
+}
+
+fn read_file_with_fallback_encoding(file_path: &PathBuf) -> Result<String> {
+    // Convert PathBuf to &str using `to_str()`
+    let path_str = file_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid file path"))?;
+
+    let buffer = fs::read(path_str)?;
+
+    // Try to decode as UTF-8 first
+    let (cow, _, success) = UTF_8.decode(&buffer);
+    if success {
+        Ok(cow.to_string())  // UTF-8 decoding successful
+    } else {
+        // If UTF-8 decoding fails, try WINDOWS_1252 (ISO-8859-1 equivalent)
+        let (cow, _, _) = WINDOWS_1252.decode(&buffer);
+        Ok(cow.to_string())
+    }
 }
 
 fn main() -> Result<()> {
@@ -602,7 +620,7 @@ fn main() -> Result<()> {
                         let rule_config = configuration
                             .rule_config_provider
                             .config_for_file(relative_path.as_ref());
-                        let res = if let Ok(file_content) = fs::read_to_string(&path) {
+                        let res = if let Ok(file_content) = read_file_with_fallback_encoding(&path) {
                             let mut opt = JS_RUNTIME.replace(None);
                             let runtime_ref = opt.get_or_insert_with(|| {
                                 v8.try_new_runtime().expect("ddsa init should succeed")
@@ -775,7 +793,7 @@ fn main() -> Result<()> {
                     .unwrap()
                     .to_str()
                     .expect("path contains non-Unicode characters");
-                let res = if let Ok(file_content) = fs::read_to_string(path) {
+                let res = if let Ok(file_content) = read_file_with_fallback_encoding(path) {
                     let file_content = Arc::from(file_content);
                     find_secrets(
                         &sds_scanner,
